@@ -1,1 +1,1 @@
-# rethinking_cholera_diagnostics
+Code and data needed to reproduce analyses in _Rethinking cholera diagnostic test performance, interpretation and evaluation: a field-based latent-class analysis in Bangladesh_ will be available here shortly. 
