@@ -1,0 +1,299 @@
+---
+title: "Manuscript stats and numbers"
+author: "Javier Perez Saez"
+date: "`r Sys.Date()`"
+output:
+  bookdown::html_document2:
+    toc: yes
+    toc_float: yes
+    number_sections: yes
+    self_contained: no
+  bookdown::word_document2:
+    toc: yes
+    number_sections: yes
+---
+
+This report prints stats and numbers for manuscript.
+
+```{r setup,  include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,
+  fig.align = "center",
+  message = FALSE,
+  warning = FALSE,
+  cache.lazy = F,
+  bitmapType = "cairo"
+)
+Sys.setlocale("LC_ALL", "C")
+```
+
+```{r preamble}
+library(tidyverse)
+library(magrittr)
+library(cowplot)
+library(gtsummary)
+library(ggthemes)
+library(here)
+library(kableExtra)
+
+source(here("analysis/utils.R"))
+
+theme_gtsummary_compact()
+
+Sys.setlocale("LC_ALL","C")
+Sys.setenv("REDO_DATA" = "FALSE")
+
+formatNumber <- function(x) {
+  formatC(x, format = "f", digits = 2, big.interval = 3, big.mark = ",")
+}
+
+formatInt <- function(x) {
+  formatC(x, format = "f", digits = 0, big.interval = 3, big.mark = ",")
+}
+
+makeEstimateText <- function(df,
+                             pct = FALSE) {
+  
+  # multiplier if the estimate is a percent
+  multi <- ifelse(pct, 100, 1)
+  
+  # symbol
+  s <- ifelse(pct, "% ", " ")
+  
+  df %>% 
+    mutate(txt = str_glue("{formatNumber(mean*multi)}{s}({formatNumber(lo*multi)}-{formatNumber(hi*multi)})"))
+}
+
+```
+
+# Results
+
+## Paragraph 1: descriptives
+
+```{r load-clinical-data}
+
+lab_data <- readRDS(here("generated_data/lab_data.rds"))
+
+# Total number of clinical samples
+n_tot <- lab_data %>% nrow()
+cat("Number of participants: \n", 
+    formatInt(n_tot))
+
+# Pct positive by RDT
+n_rdt_pos <- lab_data %>% filter(rdt_res) %>% nrow()
+cat("Pct of participants RDT+ \n",
+    str_glue("{formatNumber(n_rdt_pos/n_tot*100)}% ({formatInt(n_rdt_pos)}/{formatInt(n_tot)})"))
+
+# Pct RDT+ tested by PCR/culture
+n_pcr_pos <- lab_data %>% filter(rdt_res, pcr_res) %>% nrow()
+cat("Pct of participants PCR+ among RDT+: \n",
+    str_glue("{formatNumber(n_pcr_pos/n_rdt_pos*100)}% ({formatInt(n_pcr_pos)}/{formatInt(n_rdt_pos)})"))
+
+n_cult_pos <- lab_data %>% filter(rdt_res, cult_res) %>% nrow()
+cat("Pct of participants culture+ among RDT+: \n",
+    str_glue("{formatNumber(n_cult_pos/n_rdt_pos*100)}% ({formatInt(n_cult_pos)}/{formatInt(n_rdt_pos)})"))
+
+# Pct PCR- among RDT+
+n_pcr_pos_rdt_neg <- lab_data %>% filter(!rdt_res, pcr_res) %>% nrow()
+n_rdt_neg_pcr <- lab_data %>% filter(!rdt_res, !is.na(pcr_res)) %>% nrow()
+cat("Pct of participants PCR+ among RDT-: \n",
+    str_glue("{formatNumber(n_pcr_pos_rdt_neg/n_rdt_neg_pcr*100)}% ({formatInt(n_pcr_pos_rdt_neg)}/{formatInt(n_rdt_neg_pcr)})"))
+
+
+# Pct PCR+ among RDT+ by age
+pcr_rdt_pos_age <- inner_join(
+  lab_data %>% 
+    filter(rdt_res, pcr_res) %>% 
+    count(age_cat, name = "pcr_pos"),
+  lab_data %>% 
+    filter(rdt_res, !is.na(pcr_res)) %>% 
+    count(age_cat, name = "tot_pcr")
+)
+
+cat("Pct of participants PCR+ among RDT+ by age \n")
+pcr_rdt_pos_age %>% 
+  mutate(pct = formatNumber(pcr_pos/tot_pcr*100)) %>% 
+  kable() %>% 
+  kable_styling(full_width = F)
+
+# PCR+ among RDT+ by season
+pcr_rdt_pos_season <- inner_join(
+  lab_data %>% 
+    filter(rdt_res, pcr_res) %>% 
+    count(epi_period, name = "pcr_pos"),
+  lab_data %>% 
+    filter(rdt_res, !is.na(pcr_res)) %>% 
+    count(epi_period, name = "tot_pcr")
+)
+
+cat("Pct of participants PCR+ among RDT+ by season \n")
+pcr_rdt_pos_season %>% 
+  mutate(pct = formatNumber(pcr_pos/tot_pcr*100)) %>% 
+  kable() %>% 
+  kable_styling(full_width = F)
+
+```
+
+## Parapraph 2: post-stratified performance estimates
+```{r posstrat-results}
+
+# Load post-stratified test performance estimates
+poststrat <- readRDS(here("generated_data/poststratified_estimates_new.rds"))
+
+# Extract post-stratified number for all categories
+poststrat_txt <- map_df(1:length(poststrat), function(x) {
+  poststrat[[x]]  %>% 
+    mutate(strata = case_when(strata == "[0,5)" ~ "0-4",
+                              strata == "[5,Inf)" ~ "5+",
+                              strata == "0" & str_detect(covariate, "antibiotics")  ~ "No",
+                              strata == "1" & str_detect(covariate, "antibiotics")  ~ "Yes",
+                              T ~ strata)) %>% 
+    filter(!is.na(strata)) %>% 
+    rename(lo = q5,
+           hi = q95) %>% 
+    makeEstimateText(pct = TRUE) %>% 
+    select(age_cat, covariate, what, strata, test, txt) %>% 
+    pivot_wider(names_from = "test",
+                values_from = "txt")
+}) %>% 
+  mutate(covariate = factor(covariate, levels = c("overall", "age", "period", "antibioticsGTFCC", "antibioticsEff", "antibiotics", "time_culture"))) %>% 
+  arrange(covariate, what, strata)
+
+poststrat_txt <- poststrat_txt %>% 
+  filter(age_cat == "all")
+
+poststrat_txt %>% 
+  select(-covariate) %>% 
+  kable() %>% 
+  kable_styling(full_width = F) %>% 
+  pack_rows(index = table(poststrat_txt$covariate))
+
+
+```
+
+## Paragraph 3: PPV/NPV
+
+```{r ppv-npv}
+load(here("generated_data/ppv_npv_data.rdata"))
+
+pv_stats <- pv_mean %>% 
+  makeEstimateText(pct = T) %>% 
+  select(age_cat, epi_period, prior_chol, name, txt) %>% 
+  pivot_wider(names_from = "name",
+              values_from = "txt") %>% 
+  mutate(prior_chol = formatNumber(prior_chol*100) %>% str_c(" %"))
+
+pv_stats %>%
+  select(-age_cat) %>% 
+  kable() %>% 
+  kable_styling(full_width = F) %>% 
+  pack_rows(index = table(pv_stats$age_cat))
+
+```
+
+
+## Paragraph 4: simulations of RDT evaluation
+
+```{r simulations}
+# Load simulations
+sim_data <- readRDS("generated_data/simulated_performance_mean.rds")
+
+sim_stats <- sim_data %>% 
+  rename(lo = q5,
+         hi = q95) %>% 
+  makeEstimateText(pct = T) %>% 
+  select(what = name, chol_prior, txt, ref) %>% 
+  pivot_wider(values_from = "txt",
+              names_from = "ref") %>% 
+  arrange(what, chol_prior)
+
+sim_stats %>% 
+  select(-what) %>% 
+  kable() %>% 
+  kable_styling(full_width = F) %>% 
+  pack_rows(index = table(sim_stats$what))
+
+prior_chol_all <- lab_data %>% 
+  # summarise(prior_chol = mean(prior_chol)) %>%
+  mutate(age_cat = factor(age_cat,
+                          levels = c("overall", "[0,5)", "[5,Inf)"),
+                          labels = c("all", "0-4", "5+")),
+         epi_period = factor(epi_period, levels = c("pre-monsoon", "monsoon", "post-monsoon", "winter"))) 
+
+prior_chol_all %>% 
+  group_by(epi_period) %>% 
+  summarise(lo = quantile(prior_chol, .25),
+            hi = quantile(prior_chol, .75),
+            median = median(prior_chol)) %>% 
+  kable() %>% 
+  kable_styling(full_width = F)
+```
+
+# Discussion
+
+## Effect size antibiotics
+```{r effect-sizes}
+eff_sizes <- readRDS(file = "generated_data/effect_sizes.rds")
+
+eff_sizes_txt <- eff_sizes %>% 
+  # Fix to use 95% CrI
+  rename(lo = q5, hi = q95) %>% 
+  makeEstimateText() %>% 
+  select(test, what, covar, txt) %>% 
+  arrange(test, what, covar) %>% 
+  pivot_wider(values_from = "txt", 
+              names_from = "covar")
+
+eff_sizes_txt %>% 
+  select(-test) %>% 
+  kable() %>% 
+  kable_styling(full_width = F) %>% 
+  pack_rows(index = table(eff_sizes_txt$test))
+
+```
+
+
+## NPV culture delay
+```{r npv-culture}
+poststrat_tc <- readRDS(file = here("generated_data/poststratified_estimates_new.rds"))$time_culture %>% 
+  filter(!is.na(strata))
+
+prior_chol_median <- lab_data %>% 
+  group_by(epi_period) %>% 
+  summarise(prior_chol = median(prior_chol)) %>% 
+  mutate(age_cat = "all")
+
+# Compute PPV and NPV at mean prevalences
+pv_culture <- poststrat_tc %>% 
+  select(what, age_cat, strata, mean) %>% 
+  pivot_wider(values_from = "mean",
+              names_from = "what") %>% 
+  inner_join(prior_chol_median) %>% 
+  rowwise() %>% 
+  mutate(ppv = computePPV(p = prior_chol, sens = sensitivity, spec = 1),
+         npv = computeNPV(p = prior_chol, sens = sensitivity, spec = 1)) %>% 
+  pivot_longer(cols = c("ppv", "npv")) %>% 
+  group_by(epi_period, strata, name) %>% 
+  summarise(prior_chol = mean(prior_chol),
+            mean = mean(value),
+            lo = quantile(value, .025),
+            hi = quantile(value, .975)) %>% 
+  ungroup() %>% 
+  mutate(epi_period = factor(epi_period, levels = c("pre-monsoon", "monsoon", "post-monsoon", "winter"))) %>% 
+  arrange(name, epi_period, strata) %>% 
+  makeEstimateText() %>% 
+  select(name, epi_period, time_culture = strata, txt) %>% 
+  pivot_wider(values_from = "txt",
+              names_from = "name")
+
+
+
+pv_culture  %>% 
+  kable() %>% 
+  kable_styling(full_width = F) %>% 
+  pack_rows(index = table(pv_culture$epi_period))
+
+
+```
+
+
